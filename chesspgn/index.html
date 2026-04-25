@@ -191,6 +191,16 @@
             <label><input type="checkbox" id="isShared" /> Partage public en lecture</label>
           </div>
           <div class="row">
+            <input
+              id="sharedUsername"
+              type="text"
+              placeholder="Partager aussi avec un username précis (optionnel)"
+            />
+          </div>
+          <p class="small">
+            Astuce: si ce champ est rempli, le joueur indiqué pourra lire la partie même sans partage public.
+          </p>
+          <div class="row">
             <button id="saveGameBtn">Sauvegarder / Mettre à jour</button>
             <button id="newGameBtn" class="secondary">Nouvelle fiche</button>
           </div>
@@ -392,13 +402,28 @@
           eventName: $('#eventName').val().trim(),
           siteName: $('#siteName').val().trim(),
           roundName: $('#roundName').val().trim(),
-          pgnDate: $('#dateValue').val().trim() || todayPgnDate()
+          pgnDate: $('#dateValue').val().trim() || todayPgnDate(),
+          sharedUsername: $('#sharedUsername').val().trim()
         };
       }
 
-      function buildAcl(ownerUser, isShared) {
+      async function findUserByUsername(username) {
+        const userQuery = new Parse.Query(Parse.User);
+        userQuery.equalTo('username', username);
+        userQuery.limit(1);
+        return userQuery.first();
+      }
+
+      async function buildAcl(ownerUser, isShared, sharedUsername) {
         const acl = new Parse.ACL(ownerUser);
         acl.setPublicReadAccess(!!isShared);
+        if (sharedUsername && sharedUsername !== ownerUser.get('username')) {
+          const sharedUser = await findUserByUsername(sharedUsername);
+          if (!sharedUser) {
+            throw new Error(`Utilisateur introuvable pour le partage ciblé: ${sharedUsername}`);
+          }
+          acl.setReadAccess(sharedUser, true);
+        }
         return acl;
       }
 
@@ -430,7 +455,9 @@
         obj.set('siteName', data.siteName);
         obj.set('roundName', data.roundName);
         obj.set('pgnDate', data.pgnDate);
-        obj.setACL(buildAcl(user, data.isShared));
+        if (data.sharedUsername) obj.set('sharedWithUsername', data.sharedUsername);
+        else obj.unset('sharedWithUsername');
+        obj.setACL(await buildAcl(user, data.isShared, data.sharedUsername));
 
         await obj.save();
         currentGameId = obj.id;
@@ -438,7 +465,13 @@
         const shareUrl = `${location.origin}${location.pathname}?share=${obj.id}`;
         showMsg(
           '#gameStatus',
-          `Sauvegardé (${obj.id}). ${data.isShared ? `Lien de partage: ${shareUrl}` : 'Partie privée.'}`,
+          `Sauvegardé (${obj.id}). ${
+            data.isShared
+              ? `Lien de partage public: ${shareUrl}`
+              : data.sharedUsername
+                ? `Partage privé activé pour ${data.sharedUsername}. Lien: ${shareUrl}`
+                : 'Partie privée.'
+          }`,
           true
         );
 
@@ -456,6 +489,7 @@
         $('#siteName').val(obj.get('siteName') || '');
         $('#roundName').val(obj.get('roundName') || '');
         $('#dateValue').val(obj.get('pgnDate') || todayPgnDate());
+        $('#sharedUsername').val(obj.get('sharedWithUsername') || '');
 
         const pgn = obj.get('pgn') || '';
         $pgnArea.val(pgn);
@@ -507,7 +541,12 @@
         let html = '<table><thead><tr><th>Titre</th><th>Infos</th><th>Actions</th></tr></thead><tbody>';
         items.forEach((g) => {
           const id = g.id;
-          const shared = g.get('isShared') ? '🌍 partagé' : '🔒 privé';
+          const sharedWith = g.get('sharedWithUsername');
+          const shared = g.get('isShared')
+            ? '🌍 partagé publiquement'
+            : sharedWith
+              ? `👤 partagé avec ${escapeHtml(sharedWith)}`
+              : '🔒 privé';
           html += `
             <tr>
               <td><strong>${escapeHtml(g.get('title') || '(sans titre)')}</strong><br><span class="small">${id}</span></td>
@@ -569,6 +608,7 @@
         $('#result').val('*');
         $('#dateValue').val(todayPgnDate());
         $('#isShared').prop('checked', false);
+        $('#sharedUsername').val('');
         $('#variantInput').val('');
         game = new Chess();
         board.start();
@@ -618,16 +658,15 @@
           const Game = Parse.Object.extend(GAME_CLASS);
           const q = new Parse.Query(Game);
           const obj = await q.get(sharedId);
-          const canSee = !!obj.get('isShared');
-          if (!canSee) {
-            $('#sharedPanel').show();
-            $('#sharedContent').html('<p class="error">Cette partie n\'est pas partagée publiquement.</p>');
-            return;
-          }
-
           $('#sharedPanel').show();
+          const visibility = obj.get('isShared')
+            ? 'Partage public'
+            : obj.get('sharedWithUsername')
+              ? `Partage privé autorisé pour: ${escapeHtml(obj.get('sharedWithUsername'))}`
+              : 'Partie privée (accès autorisé)';
           const html = `
             <p><strong>${escapeHtml(obj.get('title') || '(sans titre)')}</strong></p>
+            <p class="small">${visibility}</p>
             <p>${escapeHtml(obj.get('white') || '?')} vs ${escapeHtml(obj.get('black') || '?')} — ${escapeHtml(obj.get('result') || '*')}</p>
             <textarea readonly>${escapeHtml(obj.get('pgn') || '')}</textarea>
           `;
