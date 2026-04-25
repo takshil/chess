@@ -7,6 +7,8 @@
 
     <section class="status">
       <p>Le projet est configuré avec <strong>Vue 3</strong> et <strong>Vite</strong>.</p>
+      <p>Mode actif : <strong>{{ back4appConfig.mode }}</strong></p>
+      <p>Serveur Back4App : <strong>{{ back4appConfig.serverURL || 'non configuré' }}</strong></p>
       <p>Lancez <code>npm install</code> puis <code>npm run dev</code>.</p>
     </section>
 
@@ -20,6 +22,7 @@
 </template>
 
 <script setup>
+import { back4appConfig } from './back4app.js'
 </script>
 
 <style>
